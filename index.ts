@@ -13,7 +13,7 @@ interface UserPayload extends JWTPayload {
   id: string;
   email: string;
   name?: string;
-  role?: "user" | "creator" | "admin";
+  role?: "explorer" | "publisher" | "admin";
   image?: string;
   displayName?: string;
   photoURL?: string;
@@ -30,15 +30,17 @@ interface User {
   displayName?: string;
   image?: string;
   photoURL?: string;
-  role?: "user" | "creator" | "admin";
+  role?: "explorer" | "publisher" | "admin";
   warningCount?: number;
 }
 
-interface Prompt {
+interface Resource {
   _id: ObjectId;
   title: string;
   content: string;
-  aiTool: string;
+  language: string;
+  estimatedTime?: string;
+  documentationUrl?: string;
   difficulty: string;
   category: string;
   visibility: string;
@@ -47,11 +49,11 @@ interface Prompt {
   authorName: string;
   authorEmail: string;
   authorImage: string;
-  status: "pending" | "approved" | "rejected" | "draft";
+  status: "pending" | "approved" | "rejected";
   rating: number;
   ratingCount: number;
   totalReviews: number;
-  copyCount: number;
+  usageCount: number;
   bookmarks: (string | ObjectId)[];
   reviews: Review[];
   createdAt: Date;
@@ -68,8 +70,8 @@ interface Review {
 
 interface Report {
   _id: ObjectId;
-  promptId: ObjectId;
-  promptTitle: string;
+  resourceId: ObjectId;
+  resourceTitle: string;
   userId: ObjectId;
   reason: string;
   description: string;
@@ -82,9 +84,9 @@ interface Report {
   };
 }
 
-interface TopCreator {
+interface TopPublisher {
   _id: string | ObjectId;
-  totalPrompts: number;
+  totalResources: number;
   authorName: string;
   authorImage: string;
   authorEmail: string;
@@ -92,28 +94,27 @@ interface TopCreator {
 
 interface AdminStats {
   totalUsers: number;
-  totalPrompts: number;
+  totalResources: number;
   totalReviews: number;
-  totalCopies: number;
-  engineData: EngineData[];
+  totalUsage: number;
+  languageData: LanguageData[];
 }
 
-interface EngineData {
+interface LanguageData {
   name: string;
-  Copies: number;
-  Prompts: number;
+  Usage: number;
+  Resources: number;
 }
 
-interface CreatorAnalytics {
-  totalPrompts: number;
-  totalCopies: number;
+interface PublisherAnalytics {
+  totalResources: number;
+  totalUsage: number;
   totalBookmarks: number;
 }
 
-interface UserAnalytics {
+interface ExplorerAnalytics {
   totalBookmarks: number;
   totalReviews: number;
-  totalCopies: number;
 }
 
 interface ProfileData {
@@ -121,7 +122,7 @@ interface ProfileData {
   email: string;
   image: string;
   role: string;
-  totalPrompts: number;
+  totalResources: number;
 }
 
 const uri = process.env.MONGODB_URI;
@@ -177,13 +178,13 @@ const verifyToken: RequestHandler = async (
   }
 };
 
-const creatorVerifyToken: RequestHandler = async (
+const publisherVerifyToken: RequestHandler = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ) => {
   const user = req.user;
-  if (!user || user.role !== "creator") {
+  if (!user || user.role !== "publisher") {
     return res.status(403).json({ message: "Forbidden" });
   }
   next();
@@ -204,12 +205,12 @@ const adminVerifyToken: RequestHandler = async (
 async function run() {
   try {
     await client.connect();
-    const db: Db = client.db("tech-bazaar");
+    const db: Db = client.db("devhive");
     const usersCollection: Collection<User> = db.collection("user");
-    const promptsCollection: Collection<Prompt> = db.collection("prompts");
+    const resourcesCollection: Collection<Resource> = db.collection("resources");
     const reportsCollection: Collection<Report> = db.collection("reports");
 
-    app.post("/api/prompts", verifyToken, async (req: AuthenticatedRequest, res: Response) => {
+    app.post("/api/resources", verifyToken, async (req: AuthenticatedRequest, res: Response) => {
       try {
         const data = req.body;
         if (!req.user?.id) {
@@ -235,7 +236,7 @@ async function run() {
         const authorImage =
           user.image || user.photoURL || "https://placeholder.com/user.png";
 
-        const promptDocument = {
+        const resourceDocument = {
           ...data,
           userId: req.user.id,
           authorName,
@@ -244,12 +245,12 @@ async function run() {
           createdAt: new Date(),
         };
 
-        const result = await promptsCollection.insertOne(promptDocument);
+        const result = await resourcesCollection.insertOne(resourceDocument);
 
         return res.status(201).json({
           success: true,
           message:
-            "Prompt entity securely committed to target dataset context.",
+            "Resource entity securely committed to target dataset context.",
           insertedId: result.insertedId,
         });
       } catch (error) {
@@ -262,11 +263,11 @@ async function run() {
     });
 
     app.post(
-      "/api/prompts/:id/review",
+      "/api/resources/:id/review",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const promptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+          const resourceId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
           const { rating, comment } = req.body;
 
           const userId = req.user!.id;
@@ -287,16 +288,16 @@ async function run() {
             createdAt: new Date(),
           };
 
-          const prompt = await promptsCollection.findOne({
-            _id: new ObjectId(promptId),
+          const resource = await resourcesCollection.findOne({
+            _id: new ObjectId(resourceId),
           });
-          if (!prompt) {
+          if (!resource) {
             return res
               .status(404)
-              .json({ success: false, message: "Prompt not found." });
+              .json({ success: false, message: "Resource not found." });
           }
 
-          const currentReviews = prompt.reviews || [];
+          const currentReviews = resource.reviews || [];
           const totalReviewsCount = currentReviews.length + 1;
 
           const currentRatingSum = currentReviews.reduce(
@@ -306,8 +307,8 @@ async function run() {
           const newAverageRating =
             (currentRatingSum + Number(rating)) / totalReviewsCount;
 
-          await promptsCollection.updateOne(
-            { _id: new ObjectId(promptId) },
+          await resourcesCollection.updateOne(
+            { _id: new ObjectId(resourceId) },
             {
               $push: { reviews: newReview },
               $set: { rating: newAverageRating },
@@ -330,11 +331,11 @@ async function run() {
     );
 
     app.post(
-      "/api/prompts/:id/report",
+      "/api/resources/:id/report",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const promptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+          const resourceId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
           const userId = req.user!.id;
           const { reason, description } = req.body;
 
@@ -344,13 +345,13 @@ async function run() {
               .json({ success: false, message: "Reason is required." });
           }
 
-          const targetedPrompt = await promptsCollection.findOne({
-            _id: new ObjectId(promptId),
+          const targetedResource = await resourcesCollection.findOne({
+            _id: new ObjectId(resourceId),
           });
-          if (!targetedPrompt) {
+          if (!targetedResource) {
             return res
               .status(404)
-              .json({ success: false, message: "prompt not found" });
+              .json({ success: false, message: "resource not found" });
           }
 
           const reporterUser = await usersCollection.findOne({
@@ -359,8 +360,8 @@ async function run() {
 
           const newReport: Report = {
             _id: new ObjectId(),
-            promptId: new ObjectId(promptId),
-            promptTitle: targetedPrompt.title || "UnTitled Prompt",
+            resourceId: new ObjectId(resourceId),
+            resourceTitle: targetedResource.title || "Untitled Resource",
             userId: new ObjectId(userId),
             reason,
             description: description || "",
@@ -427,20 +428,20 @@ async function run() {
     );
 
     app.patch(
-      "/api/prompts/:id/copy",
+      "/api/resources/:id/copy",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const promptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+          const resourceId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
-          const result = await promptsCollection.updateOne(
-            { _id: new ObjectId(promptId) },
-            { $inc: { copyCount: 1 } },
+          const result = await resourcesCollection.updateOne(
+            { _id: new ObjectId(resourceId) },
+            { $inc: { usageCount: 1 } },
           );
           if (result.matchedCount === 0) {
             return res.status(404).json({
               success: false,
-              message: "Prompt not found.",
+              message: "Resource not found.",
             });
           }
 
@@ -458,11 +459,11 @@ async function run() {
     );
 
     app.patch(
-      "/api/prompts/:id",
+      "/api/resources/:id",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const promptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+          const resourceId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
           const updatedData = req.body;
 
           if (!req.user?.id) {
@@ -475,7 +476,7 @@ async function run() {
           const {
             title,
             content,
-            aiTool,
+            language,
             difficulty,
             category,
             visibility,
@@ -486,7 +487,7 @@ async function run() {
             $set: {
               ...(title && { title }),
               ...(content && { content }),
-              ...(aiTool && { aiTool }),
+              ...(language && { language }),
               ...(difficulty && { difficulty }),
               ...(category && { category }),
               ...(visibility && { visibility }),
@@ -496,11 +497,11 @@ async function run() {
           };
 
           const query = {
-            _id: new ObjectId(promptId),
+            _id: new ObjectId(resourceId),
             userId: req.user.id,
           };
 
-          const result = await promptsCollection.updateOne(query, updateDoc);
+          const result = await resourcesCollection.updateOne(query, updateDoc);
 
           if (result.matchedCount === 0) {
             return res.status(404).json({
@@ -523,22 +524,22 @@ async function run() {
     );
 
     app.patch(
-      "/api/prompts/:id/bookmark",
+      "/api/resources/:id/bookmark",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const promptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+          const resourceId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
           const userId = req.user!.id;
 
-          const prompt = await promptsCollection.findOne({
-            _id: new ObjectId(promptId),
+          const resource = await resourcesCollection.findOne({
+            _id: new ObjectId(resourceId),
             bookmarks: new ObjectId(userId),
           });
 
           let updateQuery;
           let isSavedNow;
 
-          if (prompt) {
+          if (resource) {
             updateQuery = { $pull: { bookmarks: new ObjectId(userId) } };
             isSavedNow = false;
           } else {
@@ -546,8 +547,8 @@ async function run() {
             isSavedNow = true;
           }
 
-          await promptsCollection.updateOne(
-            { _id: new ObjectId(promptId) },
+          await resourcesCollection.updateOne(
+            { _id: new ObjectId(resourceId) },
             updateQuery,
           );
 
@@ -576,7 +577,7 @@ async function run() {
           const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
           const { role } = req.body;
 
-          const allowedRoles = ["user", "creator", "admin"];
+          const allowedRoles = ["explorer", "publisher", "admin"];
           if (!allowedRoles.includes(role)) {
             return res.status(400).json({ message: "Invalid role type!" });
           }
@@ -605,7 +606,7 @@ async function run() {
     );
 
     app.patch(
-      "/admin/prompts/status/:id",
+      "/admin/resources/status/:id",
       verifyToken,
       adminVerifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
@@ -625,7 +626,7 @@ async function run() {
             $set: { status: status },
           };
 
-          const result = await promptsCollection.updateOne(query, updateDoc);
+          const result = await resourcesCollection.updateOne(query, updateDoc);
 
           if (result.matchedCount === 0) {
             return res
@@ -676,22 +677,22 @@ async function run() {
     );
 
     app.delete(
-      "/admin/reports/remove-prompt",
+      "/admin/reports/remove-resource",
       verifyToken,
       adminVerifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const { reportId, promptId } = req.body;
+          const { reportId, resourceId } = req.body;
 
-          if (!reportId || !promptId) {
+          if (!reportId || !resourceId) {
             return res.status(400).json({
               success: false,
-              message: "Report ID and Prompt ID are required!",
+              message: "Report ID and Resource ID are required!",
             });
           }
 
-          const promptResult = await promptsCollection.deleteOne({
-            _id: new ObjectId(promptId),
+          const resourceResult = await resourcesCollection.deleteOne({
+            _id: new ObjectId(resourceId),
           });
 
           const reportResult = await reportsCollection.deleteOne({
@@ -699,17 +700,17 @@ async function run() {
           });
 
           if (
-            promptResult.deletedCount === 0 &&
+            resourceResult.deletedCount === 0 &&
             reportResult.deletedCount === 0
           ) {
             return res
               .status(404)
-              .json({ success: false, message: "Prompt or Report not found!" });
+              .json({ success: false, message: "Resource or Report not found!" });
           }
 
           res.json({
             success: true,
-            message: "Prompt permanently removed and report cleared!",
+            message: "Resource permanently removed and report cleared!",
           });
         } catch (error) {
           res
@@ -720,7 +721,7 @@ async function run() {
     );
 
     app.delete(
-      "/admin/prompts/:id",
+      "/admin/resources/:id",
       verifyToken,
       adminVerifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
@@ -728,7 +729,7 @@ async function run() {
           const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
           const query = { _id: new ObjectId(id) };
 
-          const result = await promptsCollection.deleteOne(query);
+          const result = await resourcesCollection.deleteOne(query);
 
           if (result.deletedCount === 0) {
             return res.status(404).json({
@@ -781,11 +782,11 @@ async function run() {
     );
 
     app.delete(
-      "/api/prompts/:id",
+      "/api/resources/:id",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const promptId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+          const resourceId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
           if (!req.user?.id) {
             return res
@@ -794,11 +795,11 @@ async function run() {
           }
 
           const query = {
-            _id: new ObjectId(promptId),
+            _id: new ObjectId(resourceId),
             userId: req.user.id,
           };
 
-          const result = await promptsCollection.deleteOne(query);
+          const result = await resourcesCollection.deleteOne(query);
 
           if (result.deletedCount === 0) {
             return res.status(404).json({
@@ -820,26 +821,26 @@ async function run() {
       },
     );
 
-    app.get("/api/top-creators", async (req: Request, res: Response) => {
+    app.get("/api/top-publishers", async (req: Request, res: Response) => {
       try {
-        const topCreators = (await promptsCollection
+          const topPublishers = (await resourcesCollection
           .aggregate([
             { $match: { status: "approved" } },
             {
               $group: {
                 _id: "$userId",
-                totalPrompts: { $sum: 1 },
+                totalResources: { $sum: 1 },
                 authorName: { $last: "$authorName" },
                 authorImage: { $last: "$authorImage" },
                 authorEmail: { $last: "$authorEmail" },
               },
             },
-            { $sort: { totalPrompts: -1 } },
+            { $sort: { totalResources: -1 } },
             { $limit: 5 },
           ])
-          .toArray()) as TopCreator[];
+          .toArray()) as TopPublisher[];
 
-        res.json({ success: true, data: topCreators });
+        res.json({ success: true, data: topPublishers });
       } catch (error) {
         res
           .status(500)
@@ -854,34 +855,34 @@ async function run() {
       async (req: AuthenticatedRequest, res: Response) => {
         try {
           const totalUsers = await usersCollection.countDocuments();
-          const totalPrompts = await promptsCollection.countDocuments();
+          const totalResources = await resourcesCollection.countDocuments();
           const totalReviews = await reportsCollection.countDocuments();
 
-          const copyAggregation = await promptsCollection
+          const usageAggregation = await resourcesCollection
             .aggregate([
-              { $group: { _id: null, totalCopies: { $sum: "$copyCount" } } },
+              { $group: { _id: null, totalUsage: { $sum: "$usageCount" } } },
             ])
             .toArray();
-          const totalCopies = copyAggregation[0]?.totalCopies || 0;
+          const totalUsage = usageAggregation[0]?.totalUsage || 0;
 
-          const aiToolStats = await promptsCollection
+          const languageStats = await resourcesCollection
             .aggregate([
               {
                 $group: {
-                  _id: "$aiTool",
-                  Prompts: { $sum: 1 },
-                  Copies: { $sum: "$copyCount" },
+                  _id: "$language",
+                  Resources: { $sum: 1 },
+                  Usage: { $sum: "$usageCount" },
                 },
               },
             ])
             .toArray();
 
-          const engineData: EngineData[] = aiToolStats.map((stat) => {
+          const languageData: LanguageData[] = languageStats.map((stat) => {
             const rawName = stat._id || "unknown";
             return {
               name: rawName.charAt(0).toUpperCase() + rawName.slice(1),
-              Copies: stat.Copies || 0,
-              Prompts: stat.Prompts || 0,
+              Usage: stat.Usage || 0,
+              Resources: stat.Resources || 0,
             };
           });
 
@@ -889,11 +890,11 @@ async function run() {
             success: true,
             stats: {
               totalUsers,
-              totalPrompts,
+              totalResources,
               totalReviews,
-              totalCopies,
+              totalUsage,
             },
-            engineData,
+            languageData,
           });
         } catch (error) {
           res
@@ -904,18 +905,18 @@ async function run() {
     );
 
     app.get(
-      "/api/prompts",
+      "/api/resources",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         const { page = 1, limit = 10 } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
 
-        const result = await promptsCollection
+        const result = await resourcesCollection
           .find({ userId: req.user!.id })
           .skip(skip)
           .limit(Number(limit))
           .toArray();
-        const totalData = await promptsCollection.countDocuments({
+        const totalData = await resourcesCollection.countDocuments({
           userId: req.user!.id,
         });
         const totalPages = Math.ceil(totalData / Number(limit));
@@ -924,12 +925,12 @@ async function run() {
     );
 
     app.get(
-      "/admin/prompts",
+      "/admin/resources",
       verifyToken,
       adminVerifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         const query = {};
-        const result = await promptsCollection.find(query).toArray();
+        const result = await resourcesCollection.find(query).toArray();
         res.json(result);
       },
     );
@@ -961,9 +962,9 @@ async function run() {
       },
     );
 
-    app.get("/prompts", async (req: Request, res: Response) => {
+    app.get("/resources", async (req: Request, res: Response) => {
       try {
-        const { search, category, aiTool, difficulty, sort } = req.query;
+        const { search, category, language, difficulty, sort, page = "1", limit = "12" } = req.query;
 
         const query: Record<string, unknown> = {};
 
@@ -975,7 +976,7 @@ async function run() {
           query.$or = [
             { title: { $regex: search, $options: "i" } },
             { tags: { $regex: search, $options: "i" } },
-            { aiTool: { $regex: search, $options: "i" } },
+            { language: { $regex: search, $options: "i" } },
           ];
         }
 
@@ -983,8 +984,8 @@ async function run() {
           query.category = category;
         }
 
-        if (aiTool && aiTool !== "all" && aiTool !== "undefined") {
-          query.aiTool = aiTool;
+        if (language && language !== "all" && language !== "undefined") {
+          query.language = language;
         }
 
         if (
@@ -1000,15 +1001,30 @@ async function run() {
         if (sort === "popular") {
           sortOptions = { ratingCount: -1 };
         } else if (sort === "copied") {
-          sortOptions = { copyCount: -1 };
+          sortOptions = { usageCount: -1 };
+        } else if (sort === "most_used") {
+          sortOptions = { usageCount: -1 };
+        } else if (sort === "highest_rated") {
+          sortOptions = { rating: -1 };
+        } else if (sort === "most_bookmarked") {
+          sortOptions = { bookmarks: -1 };
         }
 
-        const result = await promptsCollection
-          .find(query)
-          .sort(sortOptions)
-          .toArray();
+        const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+        const limitNum = Math.min(50, Math.max(1, parseInt(limit as string, 10) || 12));
+        const skip = (pageNum - 1) * limitNum;
 
-        res.json(result);
+        const [result, total] = await Promise.all([
+          resourcesCollection.find(query).sort(sortOptions).skip(skip).limit(limitNum).toArray(),
+          resourcesCollection.countDocuments(query),
+        ]);
+
+        res.json({
+          data: result,
+          page: pageNum,
+          totalPages: Math.ceil(total / limitNum),
+          total,
+        });
       } catch (error) {
         res.status(500).json({
           success: false,
@@ -1017,11 +1033,11 @@ async function run() {
       }
     });
 
-    app.get("/prompts/featured", async (req: Request, res: Response) => {
+    app.get("/resources/featured", async (req: Request, res: Response) => {
       try {
         const query = { status: "approved" as const };
 
-        const result = await promptsCollection
+        const result = await resourcesCollection
           .find(query)
           .sort({ _id: -1 })
           .limit(6)
@@ -1033,10 +1049,35 @@ async function run() {
       }
     });
 
-    app.get("/prompts/:id", async (req: Request, res: Response) => {
+    app.get("/resources/:id", async (req: Request, res: Response) => {
       const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const result = await promptsCollection.findOne({ _id: new ObjectId(id) });
+      const result = await resourcesCollection.findOne({ _id: new ObjectId(id) });
       res.json(result);
+    });
+
+    app.get("/resources/related/:id", async (req: Request, res: Response) => {
+      try {
+        const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const resource = await resourcesCollection.findOne({ _id: new ObjectId(id) });
+        if (!resource) {
+          return res.json({ success: true, data: [] });
+        }
+        const related = await resourcesCollection
+          .find({
+            _id: { $ne: new ObjectId(id) },
+            status: "approved",
+            $or: [
+              { category: resource.category },
+              { language: resource.language },
+              { tags: { $in: resource.tags || [] } },
+            ],
+          })
+          .limit(4)
+          .toArray();
+        return res.json({ success: true, data: related });
+      } catch (error) {
+        return res.json({ success: true, data: [] });
+      }
     });
 
     app.get(
@@ -1046,7 +1087,7 @@ async function run() {
         try {
           const userId = req.user!.id;
 
-          const savedPrompts = await promptsCollection
+          const savedResources = await resourcesCollection
             .find({
               bookmarks: new ObjectId(userId),
             })
@@ -1054,7 +1095,7 @@ async function run() {
 
           return res.status(200).json({
             success: true,
-            data: savedPrompts,
+            data: savedResources,
           });
         } catch (error) {
           return res
@@ -1072,21 +1113,21 @@ async function run() {
           const userId = req.user!.id;
           const userObjectId = new ObjectId(userId);
 
-          const promptsWithMyReviews = await promptsCollection
+          const resourcesWithMyReviews = await resourcesCollection
             .find({
               "reviews.userId": userObjectId,
             })
             .toArray();
 
-          const myReviews = promptsWithMyReviews.map((prompt) => {
-            const userSpecificReview = prompt.reviews.find(
+          const myReviews = resourcesWithMyReviews.map((resource) => {
+            const userSpecificReview = resource.reviews.find(
               (rev) => rev.userId.toString() === userId,
             );
             return {
-              _id: prompt._id,
-              promptTitle: prompt.title,
-              aiTool: prompt.aiTool,
-              category: prompt.category,
+              _id: resource._id,
+              resourceTitle: resource.title,
+              language: resource.language,
+              category: resource.category,
               myRating: userSpecificReview?.rating || 0,
               myComment: userSpecificReview?.comment || "",
               reviewedAt: userSpecificReview?.createdAt || new Date(),
@@ -1122,7 +1163,7 @@ async function run() {
               .json({ success: false, error: "User not found." });
           }
 
-          const totalPrompts = await promptsCollection.countDocuments({
+          const totalResources = await resourcesCollection.countDocuments({
             $or: [{ userId: new ObjectId(userId) }, { userId: userId }],
           });
 
@@ -1130,8 +1171,8 @@ async function run() {
             name: user.name || "",
             email: user.email,
             image: user.image || "",
-            role: user.role || "user",
-            totalPrompts: totalPrompts || 0,
+            role: user.role || "explorer",
+            totalResources: totalResources || 0,
           };
 
           return res.status(200).json({
@@ -1147,35 +1188,35 @@ async function run() {
     );
 
     app.get(
-      "/api/creator-analytics",
+      "/api/publisher-analytics",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
-          const creatorId = req.user!.id;
+          const publisherId = req.user!.id;
 
-          if (!creatorId) {
+          if (!publisherId) {
             return res
               .status(400)
               .json({ success: false, error: "User ID missing from token." });
           }
 
-          const creatorObjectId = new ObjectId(creatorId);
+          const publisherObjectId = new ObjectId(publisherId);
 
-          const totalPrompts = await promptsCollection.countDocuments({
-            $or: [{ userId: creatorObjectId }, { userId: creatorId }],
+          const totalResources = await resourcesCollection.countDocuments({
+            $or: [{ userId: publisherObjectId }, { userId: publisherId }],
           });
 
-          const stats = await promptsCollection
+          const stats = await resourcesCollection
             .aggregate([
               {
                 $match: {
-                  $or: [{ userId: creatorObjectId }, { userId: creatorId }],
+                  $or: [{ userId: publisherObjectId }, { userId: publisherId }],
                 },
               },
               {
                 $group: {
                   _id: null,
-                  totalCopies: { $sum: { $ifNull: ["$copyCount", 0] } },
+                  totalUsage: { $sum: { $ifNull: ["$usageCount", 0] } },
                   totalBookmarks: {
                     $sum: {
                       $cond: {
@@ -1190,9 +1231,9 @@ async function run() {
             ])
             .toArray();
 
-          const analytics: CreatorAnalytics = {
-            totalPrompts: totalPrompts || 0,
-            totalCopies: stats[0]?.totalCopies || 0,
+          const analytics: PublisherAnalytics = {
+            totalResources: totalResources || 0,
+            totalUsage: stats[0]?.totalUsage || 0,
             totalBookmarks: stats[0]?.totalBookmarks || 0,
           };
 
@@ -1209,25 +1250,24 @@ async function run() {
     );
 
     app.get(
-      "/api/user-analytics",
+      "/api/explorer-analytics",
       verifyToken,
       async (req: AuthenticatedRequest, res: Response) => {
         try {
           const userId = req.user!.id;
           const userObjectId = new ObjectId(userId);
 
-          const totalBookmarks = await promptsCollection.countDocuments({
+          const totalBookmarks = await resourcesCollection.countDocuments({
             bookmarks: { $in: [userId, userObjectId] },
           });
 
-          const totalReviews = await promptsCollection.countDocuments({
+          const totalReviews = await resourcesCollection.countDocuments({
             "reviews.userId": userObjectId,
           });
 
-          const analytics: UserAnalytics = {
+          const analytics: ExplorerAnalytics = {
             totalBookmarks: totalBookmarks || 0,
             totalReviews: totalReviews || 0,
-            totalCopies: 0,
           };
 
           return res.status(200).json({
@@ -1242,7 +1282,7 @@ async function run() {
       },
     );
 
-    app.get("/prompts/:id/reviews", async (req: Request, res: Response) => {
+    app.get("/resources/:id/reviews", async (req: Request, res: Response) => {
       try {
         const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
 
@@ -1252,9 +1292,9 @@ async function run() {
           projection: { reviews: 1, totalReviews: 1, rating: 1 },
         };
 
-        const promptData = await promptsCollection.findOne<Prompt>(query, options);
+        const resourceData = await resourcesCollection.findOne<Resource>(query, options);
 
-        if (!promptData) {
+        if (!resourceData) {
           return res
             .status(404)
             .json({ success: false, message: "Prompt not found" });
@@ -1262,9 +1302,9 @@ async function run() {
 
         res.json({
           success: true,
-          reviews: promptData.reviews || [],
-          totalReviews: promptData.totalReviews || 0,
-          rating: promptData.rating || 0,
+          reviews: resourceData.reviews || [],
+          totalReviews: resourceData.totalReviews || 0,
+          rating: resourceData.rating || 0,
         });
       } catch (error) {
         res
