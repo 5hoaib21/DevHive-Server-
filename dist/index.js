@@ -59,7 +59,7 @@ const adminVerifyToken = async (req, res, next) => {
 };
 async function run() {
     try {
-        await client.connect();
+        // await client.connect();
         const db = client.db("devhive");
         const usersCollection = db.collection("user");
         const resourcesCollection = db.collection("resources");
@@ -919,7 +919,7 @@ async function run() {
                     .json({ success: false, message: "Internal Server Error" });
             }
         });
-        await client.db("admin").command({ ping: 1 });
+        // await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
     }
     finally {

@@ -204,7 +204,7 @@ const adminVerifyToken: RequestHandler = async (
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     const db: Db = client.db("devhive");
     const usersCollection: Collection<User> = db.collection("user");
     const resourcesCollection: Collection<Resource> = db.collection("resources");
@@ -1313,7 +1313,7 @@ async function run() {
       }
     });
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!",
     );
